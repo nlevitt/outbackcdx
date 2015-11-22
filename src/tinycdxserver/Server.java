@@ -9,12 +9,17 @@ import org.rocksdb.RocksDBException;
 
 import java.io.*;
 import java.net.ServerSocket;
+import java.net.URL;
 import java.nio.channels.Channel;
 import java.nio.channels.ServerSocketChannel;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
+
+import static tinycdxserver.NanoHTTPD.Method.GET;
+import static tinycdxserver.NanoHTTPD.Method.POST;
+import static tinycdxserver.NanoHTTPD.Response.Status.*;
 
 public class Server extends NanoHTTPD {
     private final DataStore manager;
@@ -30,20 +35,56 @@ public class Server extends NanoHTTPD {
         this.manager = manager;
     }
 
+    String extension(String filename) {
+        int i = filename.lastIndexOf('.');
+        if (i != -1) {
+            return filename.substring(i + 1);
+        } else {
+            return null;
+        }
+    }
+
+    String guessContentType(String filename) {
+        switch (extension(filename)) {
+            case "js": return "application/javascript";
+            case "css": return "text/css";
+            case "html": return "text/html";
+            case "tag": return "riot/tag";
+            default: return "application/octet-stream";
+        }
+    }
+
+    InputStream openResource(String filename) {
+        return getClass().getResourceAsStream(getClass().getPackage() + "/" + filename);
+    }
+
+    Response notFound() {
+        return new Response(NOT_FOUND, "text/plain", "Not found\n");
+    }
+
     @Override
     public Response serve(IHTTPSession session) {
         try {
-            if (session.getUri().equals("/")) {
+            String uri = session.getUri();
+            Method method = session.getMethod();
+            if (uri.equals("/")) {
                 return collectionList();
-            } else if (session.getMethod().equals(Method.GET)) {
+            } else if (method.equals(GET) && uri.startsWith("/static/") && !uri.contains("..")) {
+                URL resource = getClass().getResource(uri.substring(1));
+                if (resource != null) {
+                    Response response = new Response(OK, guessContentType(uri), resource.openStream());
+                    response.addHeader("Cache-Control", "max-age=31536000");
+                    return response;
+                }
+            } else if (method.equals(GET)) {
                 return query(session);
-            } else if (session.getMethod().equals(Method.POST)) {
+            } else if (method.equals(POST)) {
                 return post(session);
             }
-            return new Response(Response.Status.NOT_FOUND, "text/plain", "Not found\n");
+            return notFound();
         } catch (Exception e) {
             e.printStackTrace();
-            return new Response(Response.Status.INTERNAL_ERROR, "text/plain", e.toString() + "\n");
+            return new Response(INTERNAL_ERROR, "text/plain", e.toString() + "\n");
         }
     }
 
@@ -79,14 +120,14 @@ public class Server extends NanoHTTPD {
 
             batch.commit();
         }
-        return new Response(Response.Status.OK, "text/plain", "Added " + added + " records\n");
+        return new Response(OK, "text/plain", "Added " + added + " records\n");
     }
 
     Response query(IHTTPSession session) throws IOException {
         String collection = session.getUri().substring(1);
         final Index index = manager.getIndex(collection);
         if (index == null) {
-            return new Response(Response.Status.NOT_FOUND, "text/plain", "Collection does not exist\n");
+            return new Response(NOT_FOUND, "text/plain", "Collection does not exist\n");
         }
 
         Map<String,String> params = session.getParms();
@@ -128,7 +169,7 @@ public class Server extends NanoHTTPD {
             page += "</ul>";
         }
         page += slurp(Server.class.getClassLoader().getResourceAsStream("tinycdxserver/usage.html"));
-        return new Response(Response.Status.OK, "text/html", page);
+        return new Response(OK, "text/html", page);
     }
 
     private Response collectionDetails(RocksDB db) {
@@ -140,12 +181,12 @@ public class Server extends NanoHTTPD {
             page += e.toString();
             e.printStackTrace();
         }
-        return new Response(Response.Status.OK, "text/html", page);
+        return new Response(OK, "text/html", page);
     }
 
     private Response textQuery(final Index index, String url) {
         final String canonUrl = UrlCanonicalizer.surtCanonicalize(url);
-        return new Response(Response.Status.OK, "text/plain", outputStream -> {
+        return new Response(OK, "text/plain", outputStream -> {
             Writer out = new BufferedWriter(new OutputStreamWriter(outputStream));
             for (Capture capture : index.query(canonUrl)) {
                 if (!capture.urlkey.equals(canonUrl)) break;
