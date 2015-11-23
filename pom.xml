@@ -36,7 +36,7 @@
                         <configuration>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>tinycdxserver.Server</mainClass>
+                                    <mainClass>tinycdxserver.Main</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
